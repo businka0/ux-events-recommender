@@ -1,0 +1,34 @@
+#Created tables in YDB
+
+CREATE TABLE `evnt`
+    (
+      id Utf8,
+      title Utf8,
+      text Utf8,
+      category_list Utf8,
+      start_time Datetime,
+      end_time Datetime, 
+      duration Utf8,
+      PRIMARY KEY (`id`)
+    );
+
+CREATE TABLE `user`
+    (
+      id Utf8,
+      chat_id Utf8,
+      name Utf8, 
+      fav_cat_list Utf8,
+      fav_evnts Utf8,
+      PRIMARY KEY (`id`)
+    );
+
+CREATE TABLE `evnt_hist`
+    (
+      id Utf8,
+      user_id Utf8,
+      chat_id Utf8, 
+      evnt_id Utf8, 
+      evnt_cat_list Utf8,
+      user_review bool,
+      PRIMARY KEY (`id`)
+    );
