@@ -1,0 +1,21 @@
+openapi: 3.0.0
+info:
+  title: Events Recommender Bot API
+  version: 1.0.0
+servers:
+- url: https://d5dce33tt7nf6n5t93v5.apigw.yandexcloud.net
+paths:
+  /:
+    post:
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4eeq6kuqtu37e810h4p
+        service_account_id: ajehd16prs0bafp4ahf9
+      operationId: ux-events-recommender-bot
+  /test:
+    get:
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4eeq6kuqtu37e810h4p
+        service_account_id: ajehd16prs0bafp4ahf9
+      operationId: ux-events-recommender-bot-check
