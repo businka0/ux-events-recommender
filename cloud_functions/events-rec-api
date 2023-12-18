@@ -1,0 +1,43 @@
+import json
+import pickle
+import pandas as pd
+import numpy as np
+import urllib.request
+
+
+def get_similar_events(eids, count):
+    doc_sim_df = pd.read_pickle(urllib.request.urlopen("https://storage.yandexcloud.net/test-buckets/events-chat-bot/doc_sim_df.pickle"))
+    events_list = pickle.load(urllib.request.urlopen("https://storage.yandexcloud.net/test-buckets/events-chat-bot/events_list.pkl"))
+
+    """## Find Top Similar Events for a Sample Event
+    #### Find event ID
+    """
+    event_idx = [np.where(events_list == eid)[0][0] for eid in eids]
+    event_idx
+
+    """#### Get event similarities"""
+    event_similarities = np.mean([doc_sim_df.drop(event_idx, axis='columns').loc[eid].values for eid in event_idx], axis=0)
+    event_similarities
+
+    """#### Get top 5 similar event IDs"""
+
+    similar_event_idxs = np.argsort(-event_similarities)[1:count+1]
+    similar_event_idxs
+
+    """#### Get top 5 similar events"""
+
+    return list(events_list[similar_event_idxs])
+
+
+def handler(event, context):
+    print(event)
+    events = json.loads(event['queryStringParameters']['events[]'])
+    print()
+    print(events)
+
+    return {
+        'statusCode': 200,
+        'body': {
+            'events': get_similar_events(events, 5),
+        },
+    };
