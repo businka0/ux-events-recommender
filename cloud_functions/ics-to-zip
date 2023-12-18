@@ -1,0 +1,54 @@
+import zipfile
+import boto3
+import os
+import datetime
+import ics
+from ics import Calendar, Event
+import arrow
+import zipfile
+import json
+import urllib3
+import re
+import io
+
+TG_TOKEN=os.getenv('TG_TOKEN')
+URL = f"https://api.telegram.org/bot{TG_TOKEN}/"
+http = urllib3.PoolManager(retries=False)
+session = boto3.session.Session()
+s3 = session.client(
+   service_name='s3',
+   endpoint_url='https://storage.yandexcloud.net',
+   region_name='ru-central1',
+   aws_access_key_id=os.environ.get('aws_access_key_id'),
+   aws_secret_access_key=os.environ.get('aws_secret_access_key')
+)
+
+def send_message(text, chat_id):
+    #final_text = "Ваше сообщение было: " + str(text)
+    url = URL + f"sendMessage?text={text}&chat_id={chat_id}"
+    http.request("GET", url)
+
+def handler(event, context):
+    print(f"event == {json.dumps(event)}")
+    details= event['messages'][0]['details']
+    bucket_id = details['bucket_id']
+    print(bucket_id)
+    object_id = details['object_id']
+    print(object_id)
+    chat_id = re.findall(r'\d+', object_id)[0]
+    print(chat_id)
+
+    zip_file = f"https://storage.yandexcloud.net/{bucket_id}/{object_id}"
+    print(zip_file)
+    zip_file_url = URL + f"sendDocument?document={zip_file}&chat_id={chat_id}"
+    print(zip_file_url)
+    http.request("GET",zip_file_url)
+
+    text = 'Это .ics файл, его можно загрузить  в люой календарь, которым ты пользуешься, чтобы не пропустить предстоящее событие!\n Если хочешь продолжить просмотр событий - оцени предыдущую рекомендацию  выше:)'
+
+    send_message(text, chat_id)
+    
+    return {
+        'statusCode': 200,
+        'body': 'Hello World!',
+    }
