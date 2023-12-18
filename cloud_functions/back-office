@@ -1,0 +1,232 @@
+from datetime import datetime, timedelta
+import ics
+from ics import Calendar, Event
+import io
+import zipfile
+import boto3
+import os
+import random
+import json
+import string
+import ydb
+
+driver_config = ydb.DriverConfig(
+    endpoint=os.getenv('YDB_ENDPOINT'),
+    database=os.getenv('YDB_DATABASE'),
+    credentials=ydb.iam.MetadataUrlCredentials()
+)
+
+driver = ydb.Driver(driver_config)
+# Wait for the driver to become active for requests.
+driver.wait(fail_fast=True, timeout=5)
+# Create the session pool instance to manage YDB sessions.
+pool = ydb.SessionPool(driver)
+
+session = boto3.session.Session()
+s3 = session.client(
+   service_name='s3',
+   endpoint_url='https://storage.yandexcloud.net',
+   region_name='ru-central1',
+   aws_access_key_id=os.environ.get('aws_access_key_id'),
+   aws_secret_access_key=os.environ.get('aws_secret_access_key')
+)
+
+def execute_query(text):
+    return pool.retry_operation_sync(lambda s: s.transaction().execute(
+        text,
+        commit_tx=True,
+        settings=ydb.BaseRequestSettings().with_timeout(3).with_operation_timeout(2)
+    ))
+
+def randomword(length=10):
+	letters = string.ascii_lowercase
+	return ''.join(random.choice(letters) for i in range(length))
+
+def check_user(event):
+    chat_id = event['queryStringParameters']['chat_id']
+    print(chat_id)
+    text = f'''
+            SELECT id, chat_id, name FROM user
+            WHERE chat_id == '{chat_id}'
+            LIMIT 1;
+            '''
+    return_record = execute_query(text)[0].rows
+    print(return_record)
+    return return_record
+
+def register_user(event):
+    chat_id = event['queryStringParameters']['chat_id']
+    name = event['queryStringParameters']['name']
+    return_record_text = f'''
+        INSERT INTO user
+        SELECT CAST('{randomword()}' as Utf8?) as id,
+                CAST('{chat_id}' as Utf8?) as chat_id,
+                CAST('{name}' as Utf8?) as name,
+                0 AS popular_events_offset;
+        '''
+    execute_query(return_record_text)
+    return_record = check_user(event)
+
+def log_event(event):
+    chat_id = event['queryStringParameters']['chat_id']
+    event_id = event['queryStringParameters']['event_id']
+    user_id = event['queryStringParameters']['user_id']
+    user_review = event['queryStringParameters']['user_review']
+    now_time = str(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"))
+    log_event = f'''
+        UPSERT INTO evnt_hist (
+            id,
+            chat_id,
+            evnt_id,
+            user_id,
+            user_review,
+            log_dt
+	    )
+        VALUES (
+            CAST('{randomword()}' as Utf8?),
+            CAST('{chat_id}' as Utf8?),
+            CAST('{event_id}' as Utf8?),
+            CAST('{user_id}' as Utf8?),
+            {user_review},
+            datetime('{now_time}')
+        );
+        '''
+    execute_query(log_event)
+
+def add_calendar_event(chat_id, title, text, start_time):
+    c = Calendar()
+    e = Event()
+    e.name = title
+    time = str(datetime.fromtimestamp(int(start_time)))[0:19].replace('Z', '', 1)
+    e.begin = time
+    e.description  = text
+    c.events.add(e)
+    new_string = ""
+    for i in c.serialize_iter():
+        new_string  = new_string + i + '\n'
+    print(new_string)
+    event_number = randomword()
+    file_name_ics = str(chat_id) + '_event_' + str(event_number) + '.ics'
+    file_name_zip = 'events-chat-bot/' + str(chat_id) + '_event_' + str(event_number) + '.zip'
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zipper:
+        infile_content = new_string
+        print(infile_content)
+        zipper.writestr(f'{file_name_ics}', infile_content)
+
+    s3.put_object(Bucket='test-buckets', Key=f'{file_name_zip}', Body=zip_buffer.getvalue())  
+
+    
+def get_popular_events(city_id, count, user_id):
+    now_time = str(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"))
+    text1 = f""" 
+        SELECT popular_events_offset FROM user 
+            WHERE id == '{user_id}';
+    """
+    result_offset = execute_query(text1)
+    print(result_offset[0])
+    if result_offset[0] == []:
+        offset = 0
+    else:
+        offset = result_offset[0].rows[0]['popular_events_offset']
+    text2 = f"""
+        SELECT evnt.* FROM evnt 
+        WHERE start_time > datetime('{now_time}') and start_time < datetime('{now_time}') + interval('P4W') 
+        ORDER BY members_count DESC LIMIT {count} OFFSET {offset};
+    """
+    result_query = execute_query(text2)
+    print(result_query[0])
+
+    text_update = f""" 
+        UPDATE user 
+        SET popular_events_offset = {offset} + {count}
+        WHERE id == '{user_id}';
+    """
+    execute_query(text_update)
+
+    if result_query[0] == []:
+        return
+    else:
+        return result_query[0].rows
+
+
+def get_event(event_id):
+    text2 = f"SELECT * FROM evnt WHERE id = '{event_id}';"
+    result_query = execute_query(text2)
+    print(result_query[0])
+    if result_query[0] == []:
+        return
+    else:
+        return result_query[0].rows[0]
+
+def get_events(event_ids):
+    events_str = ','.join(list(map(lambda eid: f"'{eid}'", event_ids)))
+    text2 = f"SELECT * FROM evnt WHERE id IN ({events_str});"
+    result_query = execute_query(text2)
+    print(result_query[0])
+    if result_query[0] == []:
+        return
+    else:
+        return result_query[0].rows
+
+def get_likes(user_id, count):
+    text2 = f"""
+        SELECT evnt_id FROM
+        (SELECT evnt_id, log_dt FROM evnt_hist WHERE user_id == '{user_id}' AND user_review == True
+        ORDER BY log_dt DESC
+        LIMIT {count});
+    """
+    result_query = execute_query(text2)
+    print(result_query[0])
+    if result_query[0] == []:
+        return
+    else:
+        return list(map(lambda r: r['evnt_id'], result_query[0].rows))
+
+
+def handler(event, context):
+    print(event)
+    function_to_use = event['path']
+    if function_to_use == '/back_office/get_ics_file': 
+        chat_id = event['queryStringParameters']['chat_id']
+        title = event['queryStringParameters']['title']
+        text = event['queryStringParameters']['text']
+        start_time = event['queryStringParameters']['start_time']
+        add_calendar_event(chat_id, title, text, start_time)
+        return_record = []
+
+    elif function_to_use == '/back_office/check_user':    
+        return_record = check_user(event)
+        
+    elif function_to_use == '/back_office/register_user':    
+        return_record = register_user(event)
+        
+    elif function_to_use == '/back_office/get_event':   
+        event_id = event['queryStringParameters']['event_id'] 
+        return_record = get_event(event_id)
+    
+    elif function_to_use == '/back_office/get_events': 
+        event_ids = json.loads(event['queryStringParameters']['event_ids[]'])
+        return_record = get_events(event_ids)
+
+    elif function_to_use == '/back_office/get_likes':    
+        user_id = event['queryStringParameters']['user_id']
+        count = event['queryStringParameters']['count']
+        return_record = get_likes(user_id, count)
+        
+    elif function_to_use == '/back_office/get_popular_events':
+        user_id = event['queryStringParameters']['user_id']
+        city_id = event['queryStringParameters']['city_id']
+        count = event['queryStringParameters']['count']
+        return_record = get_popular_events(city_id, count, user_id)
+
+    elif function_to_use == '/back_office/log_choice':    
+        log_event(event)
+        return_record = []
+        
+    return {
+        'statusCode': 200,
+        'body': {
+            'result': return_record   
+        },
+    }
