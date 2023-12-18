@@ -1,101 +1,265 @@
-import ydb
 import os
 import json
 import urllib3
 import random
 import string
+import urllib.parse
+import traceback
+import re
+from datetime import datetime, timedelta
 
 TG_TOKEN=os.getenv('TG_TOKEN')
 URL = f"https://api.telegram.org/bot{TG_TOKEN}/"
 http = urllib3.PoolManager(retries=False)
 
-driver_config = ydb.DriverConfig(
-    endpoint=os.getenv('YDB_ENDPOINT'),
-    database=os.getenv('YDB_DATABASE'),
-    credentials=ydb.iam.MetadataUrlCredentials()
-)
 
-driver = ydb.Driver(driver_config)
-# Wait for the driver to become active for requests.
-driver.wait(fail_fast=True, timeout=5)
-# Create the session pool instance to manage YDB sessions.
-pool = ydb.SessionPool(driver)
 
 def send_message(text, chat_id):
     #final_text = "Ваше сообщение было: " + str(text)
     url = URL + f"sendMessage?text={text}&chat_id={chat_id}"
     http.request("GET", url)
 
-def execute_query(text):
-    return pool.retry_operation_sync(lambda s: s.transaction().execute(
-        text,
-        commit_tx=True,
-        settings=ydb.BaseRequestSettings().with_timeout(3).with_operation_timeout(2)
-    ))
+def send_photos(chat_id, photo_paths, text):
+    params = {
+        'chat_id': chat_id,
+        'media': []
+    }
+    for i, path in enumerate(photo_paths):
+        if i == 0:
+            params['media'].append({'type': 'photo', 'media': path, 'caption': text, 'parse_mode': 'markdown'})
+        else: 
+            params['media'].append({'type': 'photo', 'media': path})
+    params['media'] = json.dumps(params['media'])
+    url = f'https://api.telegram.org/bot6618755723:AAFn6wepxDtSFm0qI4GPSvM_adv1B5bNZpM/sendMediaGroup' 
+    http.request(
+		'POST',
+		url,
+		fields=params
+	)
+
+def create_keyboard(event):
+	return json.dumps(
+		{
+			"inline_keyboard":[
+				[{ "text": "👎", "callback_data": f"{event['id']}_no"},
+				{ "text": "❤️", "callback_data": f"{event['id']}_yes"},
+                { "text": "📅", "callback_data": f"{event['id']}_calendar"}]
+			]
+		}
+	)
+
+def prepare_text(text: str):
+    escape_chars = r"_*`["
+    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text) \
+        .replace('    ', '\n') \
+        .replace('"', "'")
+
+def send_card(event, chat_id):
+    # Create data dict
+    start_time = datetime.utcfromtimestamp(event['start_time'] + 3600*3).strftime('%H:%M %d.%m %Y')
+    event['text'] = prepare_text(event['text'])
+    event['title'] = prepare_text(event['title'])
+
+
+    data = {
+        'photo': event['photo'],
+        'caption': f"[{event['title']}](https://vk.com/public{event['id']}) \n{event['text'][:400]}... \n\nКогда: *{start_time}*",
+        'chat_id': chat_id,
+        'parse_mode': 'Markdown',
+        'reply_markup': create_keyboard(event)
+    }
+    url = URL + "sendPhoto"
+    print(data)
+    http.request(
+        'POST',
+        url,
+        fields=data
+    )
 
 def randomword(length=10):
 	letters = string.ascii_lowercase
 	return ''.join(random.choice(letters) for i in range(length))
 
 def check_user_exists(chat_id):
-    text = f'''
-        SELECT id, chat_id, name, fav_cat_list, fav_evnts FROM user
-        WHERE chat_id == '{chat_id}'
-        LIMIT 1;
-        '''
-
-    user_record = execute_query(text)[0].rows
-    return user_record
+    data = {'chat_id': chat_id}
+    resp = http.request(
+                    'GET',
+                    url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net/back_office/check_user',
+                    fields=data
+                    )
+    return resp.json()['result']
 
 def register_user(chat_id, name): 
-    user_record_text = f'''
-        INSERT INTO user
-        SELECT CAST('{randomword()}' as Utf8?) as id,
-                CAST('{chat_id}' as Utf8?) as chat_id,
-                CAST('{name}' as Utf8?) as name;
-        '''
-    execute_query(user_record_text)
-    return user_record
+    data = {'chat_id': chat_id, 'name': name}
+    resp = http.request(
+                    'GET',
+                    url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net/back_office/register_user',
+                    fields=data
+                    )
+    return resp.json()['result']
+
+def log_choice(chat_id, event_id, user_id, reply):
+    review = reply == 'yes'
+    data = {'chat_id': chat_id, 'event_id':event_id, 'user_id':user_id, 'user_review':review }
+    resp = http.request(
+                      'GET',
+                      url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net//back_office/log_choice',
+                      fields=data
+                      )
+    print(resp.json()) 
+    
+def get_popular_events(city_id, count, user_id):
+    data = {'city_id': city_id, 'count': count, 'user_id': user_id}
+    resp = http.request(
+                    'GET',
+                    url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net/back_office/get_popular_events',
+                    fields=data
+                    )
+    return resp.json()['result']
+
+
+# def get_similar_events(event_id, count):
+
+
+def send_feedback(reply, chat_id, cbq_id):
+    url = URL + f"answerCallbackQuery?callback_query_id={cbq_id}"
+    http.request("GET", url)
+
+
+def get_event(event_id):
+    data = {'event_id': event_id}
+    resp = http.request(
+                    'GET',
+                    url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net/back_office/get_event',
+                    fields=data
+                    )
+    return resp.json()['result']
+
+def get_events(event_ids):
+    data = {'event_ids[]': json.dumps(event_ids)}
+    resp = http.request(
+                    'GET',
+                    url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net/back_office/get_events',
+                    fields=data
+                    )
+    return resp.json()['result']
+
+def get_likes(user_id, count):
+    data = {'user_id': user_id, 'count': count}
+    resp = http.request(
+                    'GET',
+                    url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net/back_office/get_likes',
+                    fields=data
+                    )
+    return resp.json()['result']
+
 
 
 def handler(event, context):
-    
-    print(f"event == {json.dumps(event)}")
-    message = json.loads(event['body'])
-    chat_id = message['message']['from']['id']
-    name = message['message']['from']['username']
-    reply = message['message']['text']
-    # Команда /start
-    if reply == '/start':
-        start_message = "Привет!\n\nЭто бот, который помогает экономить время на поиске нескучных событий и нестандартных мест, а также с его помощью ты сможешь отслеживать эти события."
-        send_message(start_message, chat_id)
+    try:
+        print(f"event == {json.dumps(event)}")
+        message = json.loads(event['body'])
+        if 'callback_query' in message.keys():
+            # подтвердим, что было выбрано
+            # получен ответ на меню
+            event_id, reply = message['callback_query']['data'].split('_')
+            chat_id = message['callback_query']['message']['chat']['id']
+            cbq_id = message['callback_query']['id']
+            send_feedback(reply, chat_id, cbq_id)
 
-        user_record = check_user_exists(chat_id)
-        print(user_record)
-        if user_record  == [] :
-            register_user(chat_id, name)
-            user_record = check_user_exists(chat_id)
+            if reply == 'calendar': 
+                
+                evnt_record = get_event(event_id) 
+                data = {'chat_id': chat_id, 'title': evnt_record['title'], 'text': evnt_record['text'], 'start_time': evnt_record['start_time']}
+                resp = http.request(
+                    'GET',
+                    url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net/back_office/get_ics_file',
+                    fields=data
+                    )
+                
+            else: 
+              user_record = check_user_exists(chat_id)
+              print(user_record)
+              if user_record  == [] :
+                  register_user(chat_id, name)
+                  user_record = check_user_exists(chat_id)
 
-    elif reply == '/send_my_fav_cats':
-        user_record = check_user_exists(chat_id)
-        if user_record[0]['fav_cat_list'] == None:
-            fav_cat_text = "Ты еще не отметил свои любимые категории"
-            send_message(fav_cat_text, chat_id)
+              log_choice(chat_id, event_id, user_record[0]['id'], reply)
+              # обновляем
+              event = get_popular_events(2, 1, user_record[0]['id'])[0]
+              send_card(event, chat_id)
         else:
-            print(user_record[0]['fav_cat_list'])
+            chat_id = message['message']['from']['id']
+            name = message['message']['from']['username']
+            reply = message['message']['text']
 
-    elif reply == '/send_my_fav_evnts':
-        user_record = check_user_exists(chat_id)
-        if user_record[0]['fav_evnts'] == None:
-            fav_evnts_text = "Ты еще не отметил ни одно событие как избранное. Хочешь посмотреть рекомендации?"
-            send_message(fav_evnts_text, chat_id)
-        else:
-            print(user_record[0]['fav_evnts'])  
-    else:
-        else_text = "Другое"
-        send_message(else_text, chat_id)
+            # Команда /start
+            if reply == '/start':
+                start_message = "Привет!\n\nnЭто бот, который помогает экономить время на поиске нескучных событий и нестандартных мест, а также с его помощью ты сможешь отслеживать эти события.! На данный момент он поддерживает следующие команды:\n\n/browse_events - подробная информация по каждому событию, можно отметить событие как понравившееся или нет - это улучшит твою рекомендацию!Также можно нажать на календарь 📅 и создать .ics файл для создания файла, который можно будет загрузить в любой удобный календарь,чтобы не забыть:)\n\n/get_recs -- собрать рекомендации на основе понравившихся ❤️ событий \n\n/get_popular_events --  увидеть популярные события"
+                send_message(start_message, chat_id)
 
+                # event_rec = get_event()
+                # send_message_card(event_rec['title'], event_rec['photo'], chat_id)
 
-    return {
-        'statusCode': 200,
-    }
+                user_record = check_user_exists(chat_id)
+                print(user_record)
+                if user_record  == [] :
+                    register_user(chat_id, name)
+                    user_record = check_user_exists(chat_id)
+            
+            elif reply == '/get_popular_events':
+                user_record = check_user_exists(chat_id)
+                events = get_popular_events(2, 5, user_record[0]['id'])
+                start_time = [datetime.utcfromtimestamp(e['start_time'] + 3600*3).strftime('%H:%M %d.%m %Y') for e in events]
+                send_photos(chat_id, 
+                    [e['photo'] for e in events], 
+                    '\n'.join([
+                        f"""[{prepare_text(e['title'])}](https://vk.com/public{e['id']}) \n\n {prepare_text(e['text'])[:50]}... \nКогда: *{t}*\n""" 
+                        for e, t in zip(events, start_time)
+                    ])
+                )
+            
+            elif reply == '/get_recs':
+                user_record = check_user_exists(chat_id)
+                event_likes = get_likes(user_record[0]['id'], 5)
+                print(f'Event likes object:{event_likes}')
+                data = {'events[]': list(map(lambda x: int(x), event_likes))}
+                print(f'Data object:{data}')
+                resp = http.request(
+                    'GET',
+                    url='https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net/get_recs',
+                    fields=data
+                    )
+                print(resp.json())
+                event_ids = resp.json()['events']
+                print(event_ids)
+                events = get_events(event_ids)
+                print(events)
+                start_time = [datetime.utcfromtimestamp(e['start_time'] + 3600*3).strftime('%H:%M %d.%m %Y') for e in events]
+                send_photos(chat_id, 
+                    [e['photo'] for e in events], 
+                    '\n'.join([
+                        f"""[{prepare_text(e['title'])}](https://vk.com/public{e['id']}) \n\n {prepare_text(e['text'])[:50]}... \nКогда: *{t}*\n""" 
+                        for e, t in zip(events, start_time)
+                    ])
+                )
+            
+
+            elif reply == '/browse_events':
+                user_record = check_user_exists(chat_id)
+                event_record = get_popular_events(2, 1, user_record[0]['id'])[0]
+                print(event_record['title'])
+                send_card(event_record, chat_id)
+            
+            else:
+                else_text = "Другое"
+                send_message(else_text, chat_id)
+        return {
+            'statusCode': 200,
+        }
+    except:
+        traceback.print_exc()
+    finally:
+        return {
+            'statusCode': 200,
+        }
