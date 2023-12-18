@@ -1,0 +1,273 @@
+openapi: 3.0.0
+info:
+  title: Events API
+  version: 1.0.0
+servers:
+- url: https://d5drc14rr9vrs0e10g9b.apigw.yandexcloud.net
+paths:
+  /get_recs:
+    get:
+      summary: Get recommendations
+      operationId: get_recs
+      parameters:
+        - name: events
+          in: query
+          description: Event id(s)
+          required: true
+          schema:
+            type: "array"
+            items: 
+              type: "integer"
+      responses:
+        '200':
+          description: Another example
+          content:
+            'application/json':
+               schema:
+                 type: "array"
+                 items:
+                   type: "integer"
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4ejhth4t9lrglklgs12
+        service_account_id: ajehd16prs0bafp4ahf9
+  /get_similar:
+    get:
+      summary: Get similar events
+      operationId: similar
+      parameters:
+        - name: event
+          in: query
+          description: Event id
+          required: true
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4ejhth4t9lrglklgs12
+              service_account_id: ajehd16prs0bafp4ahf9
+              operationId: events-rec-api
+  /back_office/get_ics_file:
+    get:
+      summary: Get .ics file with event info
+      operationId: get_ics_file
+      parameters:
+        - name: chat_id
+          in: query
+          description: Telegram Chat id 
+          required: true
+          schema:
+            type: string
+        - name: title
+          in: query
+          description: Event title
+          required: true
+          schema:
+            type: string
+        - name: text
+          in: query
+          description: Event text
+          required: true
+          schema:
+            type: string     
+        - name: start_time
+          in: query
+          description: Event start time
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: File Created   
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4e2josqko5dpiblmvia
+              service_account_id: ajehd16prs0bafp4ahf9
+  /back_office/check_user:
+    get:
+      summary: Check if user is registered in db
+      operationId: check_user
+      parameters:
+        - name: chat_id
+          in: query
+          description: Telegram Chat id 
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User record
+          content:
+            'application/json':
+               schema:
+                 type: "array"
+                 items:
+                   type: "string"
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4e2josqko5dpiblmvia
+              service_account_id: ajehd16prs0bafp4ahf9
+  /back_office/register_user:
+    get:
+      summary: Register user in db
+      operationId: register_user
+      parameters:
+        - name: chat_id
+          in: query
+          description: Telegram Chat id 
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: query
+          description: Telegram User Name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User record
+          content:
+            'application/json':
+               schema:
+                 type: "array"
+                 items:
+                   type: "string"
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4e2josqko5dpiblmvia
+              service_account_id: ajehd16prs0bafp4ahf9
+  /back_office/log_choice:
+    get:
+      summary: Log User Reaction on Event
+      operationId: log_choice
+      parameters:
+        - name: chat_id
+          in: query
+          description: Telegram Chat id 
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: query
+          description: Telegram User Name
+          required: true
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          description: User id 
+          required: true
+          schema:
+            type: string
+        - name: user_review
+          in: query
+          description: User review
+          required: true
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: User review
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4e2josqko5dpiblmvia
+              service_account_id: ajehd16prs0bafp4ahf9
+  /back_office/get_likes:
+    get:
+      summary: Get likes by user
+      operationId: get_likes
+      parameters:
+        - name: user_id
+          in: query
+          description: Telegram User id 
+          required: true
+          schema:
+            type: string
+        - name: count
+          in: query
+          description: Count Likes
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Liked events records
+          content:
+            'application/json':
+               schema:
+                 type: "array"
+                 items:
+                   type: "string"
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4e2josqko5dpiblmvia
+              service_account_id: ajehd16prs0bafp4ahf9
+  /back_office/get_events:
+    get:
+      summary: Get events by ids
+      operationId: get_events
+      parameters:
+        - name: event_ids[]
+          in: query
+          description: Events
+          required: true
+          schema:
+            type: "array"
+            items:
+                type: "string"
+      responses:
+        '200':
+          description: Event records
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4e2josqko5dpiblmvia
+              service_account_id: ajehd16prs0bafp4ahf9
+  /back_office/get_event:
+    get:
+      summary: Get event by id
+      operationId: get_event
+      parameters:
+        - name: event_id
+          in: query
+          description: Event
+          required: true
+          schema:
+            type: "string"
+      responses:
+        '200':
+          description: Event record
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4e2josqko5dpiblmvia
+              service_account_id: ajehd16prs0bafp4ahf9
+  /back_office/get_popular_events:
+    get:
+      summary: Get popular events
+      operationId: get_popular_events
+      parameters:
+        - name: city_id
+          in: query
+          description: City
+          required: true
+          schema:
+            type: "integer"
+        - name: user_id
+          in: query
+          description: User
+          required: true
+          schema:
+            type: "string"
+        - name: count
+          in: query
+          description: Count of events
+          required: true
+          schema:
+            type: "integer"
+      responses:
+        '200':
+          description: Event records
+      x-yc-apigateway-integration:
+              type: cloud_functions
+              function_id: d4e2josqko5dpiblmvia
+              service_account_id: ajehd16prs0bafp4ahf9
